@@ -9,7 +9,7 @@
 |---|---|---|
 | Skill ×4 | github-workflow / magic-docs / output-styles / scheduled-prompts | 热加载，无需重启 |
 | MCP ×3 | lsp（9 个工具：诊断/定义/引用/实现/hover/符号/重命名）、secret-scan（2）、browser（2） | 需重启 dsh web |
-| Cordis 插件 ×2 | roycode-hooks v2（**可编程事件引擎**：session 事件→shell 命令，4 个运行时管理工具 hooks_rule_add/confirm/remove/list + JSON 持久化 + 会话事件审计）、roycode-teams（9 个团队工具） | 需重启 dsh web |
+| Cordis 插件 ×3 | roycode-hooks v2（**可编程事件引擎**：session 事件→shell 命令，4 个运行时管理工具 hooks_rule_add/confirm/remove/list + JSON 持久化 + 会话事件审计）、roycode-teams（9 个团队工具）、dsh-schedule（原生定时提醒：schedule_create/list/delete，scheduled-prompts 技能的引擎） | 需重启 dsh web |
 
 ## 安装
 

@@ -133,6 +133,12 @@ $block = @'
       name: roycode-teams
       config:
         storagePath: '@DSHHOME@\roycode-teams.json'
+
+    # -- durable reminders (dsh-schedule): schedule_create/list/delete tools --
+    # session-local; fires as a later turn when the owning agent is idle;
+    # overdue records persist and fire when that session is next resumed.
+    - id: schedule
+      name: '@deepseek-ai/dsh-schedule'
 # roycode-dsh-pack-end
 '@
 $block = $block.Replace('@NODE@', $nodePath).Replace('@DSHHOME@', $DshHome)
