@@ -1,0 +1,8 @@
+{
+  "name": "roycode-hooks",
+  "version": "0.2.0",
+  "description": "Programmable event hooks: mutable rule registry + 4 management tools + JSON persistence (v2)",
+  "type": "module",
+  "main": "lib/index.js",
+  "private": true
+}
