@@ -8,7 +8,7 @@
 //     obtain explicit user confirmation before hooks_rule_confirm arms
 //     them. Config seeds are user-written and always active.
 import { spawn } from 'node:child_process'
-import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, renameSync, mkdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -60,9 +60,25 @@ function persist() {
     const active = [...rules.values()]
       .filter(r => r.status === 'active')
       .map(({ lastFiredAt, lastResult, ...rest }) => rest)
+    const data = JSON.stringify({ rules: active }, null, 2)
     const tmp = storagePath + '.tmp'
-    writeFileSync(tmp, JSON.stringify({ rules: active }, null, 2), 'utf8')
-    renameSync(tmp, storagePath)
+    writeFileSync(tmp, data, 'utf8')
+    let lastErr
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        renameSync(tmp, storagePath)
+        return
+      } catch (err) {
+        lastErr = err
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60 * (attempt + 1))
+      }
+    }
+    try {
+      writeFileSync(storagePath, data, 'utf8')
+    } catch (err) {
+      throw lastErr ?? err
+    }
+    rmSync(tmp, { force: true })
   } catch (err) {
     console.error('[roycode-hooks] persist failed:', err)
   }

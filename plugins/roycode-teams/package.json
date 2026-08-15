@@ -1,7 +1,7 @@
 {
   "name": "roycode-teams",
-  "version": "0.1.0",
-  "description": "Named subagent teams with shared inbox and memory (roycode teams.ts port)",
+  "version": "0.3.0",
+  "description": "Teams with growth governance: read cursors, archive, memory caps (v0.3)",
   "type": "module",
   "main": "lib/index.js",
   "private": true
