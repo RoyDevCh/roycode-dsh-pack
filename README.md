@@ -30,6 +30,19 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
+## 管理
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\manage.ps1 status          # 查看 7 个条目 + 技能/MCP/插件目录状态
+powershell -ExecutionPolicy Bypass -File .\manage.ps1 disable <id>    # 停用条目（patch 里加 disabled: true，重启生效）
+powershell -ExecutionPolicy Bypass -File .\manage.ps1 enable <id>     # 重新启用
+powershell -ExecutionPolicy Bypass -File .\manage.ps1 config          # dump-config 核对组合状态
+```
+
+- 可管理的条目 id：mcp-lsp / mcp-secret-scan / mcp-browser / roycode-hooks / roycode-teams / schedule / roycode-triggers
+- 禁用状态存放在 cordis.patch.yml 独立的 disables 区（install.ps1 重跑不会覆盖；uninstall 会清理）
+- GUI 另有一个只读的 Settings → Plugins 清单页（搜索/状态/配置详情），所有 ~200 个 dsh 核心条目都在里面，不要改动那些
+
 ## 结构与原理
 
 - `skills/<name>/SKILL.md` → `~/.dsh/skills/<name>/`

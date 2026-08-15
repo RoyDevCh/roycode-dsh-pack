@@ -46,6 +46,19 @@ if (Test-Path $PatchPath) {
       Write-Step "No roycode-dsh-pack block found in patch; nothing to strip"
     }
   }
+  # also strip the manage.ps1 disables section
+  $dBegin = -1; $dEnd = -1
+  for ($i = 0; $i -lt $lines.Length; $i++) {
+    if ($lines[$i].Contains('roycode-dsh-pack-disables-begin')) { $dBegin = $i }
+    if ($lines[$i].Contains('roycode-dsh-pack-disables-end')) { $dEnd = $i }
+  }
+  if ($dBegin -ge 0 -and $dEnd -gt $dBegin) {
+    $kept = @()
+    for ($i = 0; $i -lt $lines.Length; $i++) { if ($i -lt $dBegin -or $i -gt $dEnd) { $kept += $lines[$i] } }
+    $newContent = ($kept -join $nl).TrimEnd("`r", "`n") + $nl
+    [System.IO.File]::WriteAllText($PatchPath, $newContent, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Step "Disables section removed"
+  }
 } else {
   Write-Step "No patch file at $PatchPath"
 }
