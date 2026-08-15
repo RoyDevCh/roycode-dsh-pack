@@ -71,6 +71,10 @@ const reg = registrations[0]
 check('tab id = custom, order 20', reg.meta.id === 'custom' && reg.meta.order === 20, JSON.stringify(reg.meta.id))
 check('label bound to NS', reg.meta.label() === 'settings.roycodeInventory:tab', reg.meta.label())
 
+// setRawIds 被注入
+const injected0 = reg.meta.inject()
+check('injected exposes setRawIds', typeof injected0.setRawIds === 'function')
+
 // injected list 过滤
 const injected = reg.meta.inject()
 const filtered = await injected.list()

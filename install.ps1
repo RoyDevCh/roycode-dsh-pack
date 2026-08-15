@@ -150,6 +150,7 @@ $block = @'
         host: '127.0.0.1'
         token: ''
         target: 'latest'
+        patchPath: '@DSHHOME@\profiles\web\cordis.patch.yml'
 
     # -- custom plugins tab (roycode-inventory, client): Settings -> Plugins --
     # adds a "Custom" tab listing only the roycode-dsh-pack entries

@@ -1,7 +1,7 @@
 {
   "name": "roycode-triggers",
-  "version": "0.1.0",
-  "description": "Inbound HTTP webhooks: POST /trigger injects a follow-up turn into live root agents (remote triggers)",
+  "version": "0.2.0",
+  "description": "Inbound webhooks + plugin toggle endpoints (v0.2)",
   "type": "module",
   "main": "lib/index.js",
   "private": true
