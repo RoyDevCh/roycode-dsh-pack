@@ -38,8 +38,8 @@ window.__ModuleLoader__.load({
 				let current = true;
 				Promise.resolve().then(() => list()).then((entries) => {
 					if (current) setState({ status: "ready", entries: entries ?? [] });
-				}, () => {
-					if (current) setState({ status: "error", entries: [] });
+				}, (err) => {
+					if (current) setState({ status: "error", error: String((err && err.message) || err) });
 				});
 				return () => { current = false; };
 			}, [list]);
@@ -47,7 +47,7 @@ window.__ModuleLoader__.load({
 				return react.createElement("p", null, "Loading custom plugins…");
 			}
 			if (state.status === "error") {
-				return react.createElement("p", null, "Failed to load the plugin inventory.");
+				return react.createElement("p", { style: { color: "#e5534b" } }, "Failed to load the plugin inventory: " + (state.error || "unknown"));
 			}
 			return react.createElement("ul", {
 				style: { margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }
@@ -69,9 +69,14 @@ window.__ModuleLoader__.load({
 			}), "roycode-inventory: dictionaries");
 			const t = ctx.locale.bind(NS);
 			const listCustom = async () => {
-				const result = await ctx.remote.pluginInventory.list();
+				const gateway = ctx.remote && ctx.remote.pluginInventory;
+				if (!gateway || typeof gateway.list !== "function") {
+					throw new Error("remote service pluginInventory.list is not available (gateway=" + Boolean(ctx.remote) + ")");
+				}
+				const result = await gateway.list();
 				if (!result.ok) throw new Error("pluginInventory.list failed: " + result.error.code + ": " + result.error.message);
-				return (result.value ?? []).filter(isCustomEntry);
+				// result.value is a PluginInventorySnapshot object, not an array
+				return (result.value?.entries ?? []).filter(isCustomEntry);
 			};
 			const injected = () => ({ list: listCustom });
 			ctx.slots.inject("settings.plugins.tab", () => ctx.slots.register({

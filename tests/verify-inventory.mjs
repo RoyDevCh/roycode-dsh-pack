@@ -59,7 +59,7 @@ const ctx = {
     },
   },
   remote: {
-    pluginInventory: { list: async () => ({ ok: true, value: sampleEntries }) },
+    pluginInventory: { list: async () => ({ ok: true, value: { entries: sampleEntries, total: sampleEntries.length } }) },
   },
 }
 
