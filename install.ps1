@@ -139,6 +139,17 @@ $block = @'
     # overdue records persist and fire when that session is next resumed.
     - id: schedule
       name: '@deepseek-ai/dsh-schedule'
+
+    # -- inbound webhooks (roycode-triggers): POST /trigger -> follow-up turn --
+    # curl -X POST http://127.0.0.1:8787/trigger -H "content-type: application/json" -d "{\"message\":\"hello\"}"
+    # optional: token (Bearer auth), target: latest|all, session id in payload
+    - id: roycode-triggers
+      name: roycode-triggers
+      config:
+        port: 8787
+        host: '127.0.0.1'
+        token: ''
+        target: 'latest'
 # roycode-dsh-pack-end
 '@
 $block = $block.Replace('@NODE@', $nodePath).Replace('@DSHHOME@', $DshHome)
@@ -194,7 +205,7 @@ if (-not $SkipVerify) {
     Write-Step 'Composing config (dsh --profile web --dump-config)...'
     $dump = & dsh --profile web --dump-config 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { Write-Warning "dump-config failed (exit $LASTEXITCODE). Check $PatchPath" }
-    foreach ($id in @('mcp-lsp', 'mcp-secret-scan', 'mcp-browser', 'roycode-hooks', 'roycode-teams')) {
+    foreach ($id in @('mcp-lsp', 'mcp-secret-scan', 'mcp-browser', 'roycode-hooks', 'roycode-teams', 'roycode-triggers')) {
       if ($dump -match [regex]::Escape($id)) { Write-Host "  [ok] $id" } else { Write-Warning "  [missing] $id in composed config" }
     }
   } else {
