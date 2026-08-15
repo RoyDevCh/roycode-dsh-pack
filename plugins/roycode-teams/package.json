@@ -1,7 +1,7 @@
 {
   "name": "roycode-teams",
-  "version": "0.3.0",
-  "description": "Teams with growth governance: read cursors, archive, memory caps (v0.3)",
+  "version": "0.4.0",
+  "description": "Teams with growth governance + archived-history reads (v0.4)",
   "type": "module",
   "main": "lib/index.js",
   "private": true

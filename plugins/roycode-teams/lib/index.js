@@ -263,6 +263,27 @@ function register(ctx, config) {
       },
     },
     {
+      name: 'team_history',
+      description: 'Read archived messages of a team (moved out of the live inbox by team_archive). Pass since to read only messages with seq greater than a point; limit caps to the newest N. History is an immutable audit log.',
+      parameters: {
+        team: { type: 'string', required: true },
+        since: { type: 'integer', description: 'Only archived messages with seq greater than this.' },
+        limit: { type: 'integer', description: 'Return only the newest N matching archived messages.' },
+      },
+      execute: async (args) => {
+        const state = load(config)
+        const team = getTeam(state, config, args.team)
+        let msgs = team.history
+        if (args.since !== undefined && args.since !== null) msgs = msgs.filter(m => m.seq > args.since)
+        if (args.limit > 0) msgs = msgs.slice(-args.limit)
+        return {
+          team: team.name,
+          archived: team.history.length,
+          messages: msgs.map(m => ({ seq: m.seq, from: m.from, text: m.text, ts: m.ts })),
+        }
+      },
+    },
+    {
       name: 'team_memory_append',
       description: 'Append a durable note to the team shared memory. Memory is capped (default 50 entries); the oldest overflow moves to memoryHistory.',
       parameters: {

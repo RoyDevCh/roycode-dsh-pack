@@ -13,7 +13,7 @@ const mod = await import(pathToFileURL(PLUGIN).href + '?v=' + Date.now())
 const registered = []
 mod.apply({ tools: { register: d => registered.push(d) } }, { storagePath: STORE })
 const t = Object.fromEntries(registered.map(d => [d.name, d]))
-check('tools = 11', registered.length === 11, String(registered.length))
+check('tools = 12', registered.length === 12, String(registered.length))
 
 // 时序：先发消息，再加 bob（游标 = 加入时的最新 seq）
 await t.team_create.execute({ team: 'core' })
@@ -56,6 +56,16 @@ const arch2 = await t.team_archive.execute({ team: 'core' })
 check('archive idempotent', arch2.archived === 0, JSON.stringify(arch2))
 const inboxAfterArch = await t.team_inbox.execute({ team: 'core', member: 'bob' })
 check('archived seqs gone from inbox', !inboxAfterArch.messages.some(m => m.seq <= 5) && inboxAfterArch.messages.length === 200, 'first=' + inboxAfterArch.messages[0]?.seq)
+
+
+// team_history：归档区可读回（审计闭环）
+const hist1 = await t.team_history.execute({ team: 'core' })
+lossless('history read', hist1)
+check('history returns archived 5', hist1.archived === 5 && hist1.messages.length === 5 && hist1.messages[0].seq === 1, JSON.stringify(hist1.messages.map(m => m.seq)))
+const hist2 = await t.team_history.execute({ team: 'core', since: 2 })
+check('history since filters', hist2.messages.length === 3 && hist2.messages[0].seq === 3, JSON.stringify(hist2.messages.map(m => m.seq)))
+const hist3 = await t.team_history.execute({ team: 'core', limit: 2 })
+check('history limit newest N', hist3.messages.length === 2 && hist3.messages[1].seq === 5, JSON.stringify(hist3.messages.map(m => m.seq)))
 
 // 内存上限 + 清空
 for (let i = 1; i <= 55; i++) await t.team_memory_append.execute({ team: 'core', content: 'note' + i })
