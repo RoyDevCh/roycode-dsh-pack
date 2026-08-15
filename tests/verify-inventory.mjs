@@ -32,12 +32,19 @@ await import(url)
 check('module loaded via __ModuleLoader__', loaded !== null)
 
 // fake ctx
+// loader entry ids from patch inserts carry an "include:" prefix (observed live)
 const sampleEntries = [
-  { entryId: 'dsh-agent', moduleName: '@deepseek-ai/dsh-agent', fiberPhase: 'active' },
-  { entryId: 'mcp-lsp', moduleName: '@deepseek-ai/dsh-mcp-client', fiberPhase: 'active' },
-  { entryId: 'roycode-hooks', moduleName: 'roycode-hooks', fiberPhase: 'active' },
-  { entryId: 'schedule', moduleName: '@deepseek-ai/dsh-schedule', fiberPhase: 'active' },
-  { entryId: 'dsh-llm-retry', moduleName: '@deepseek-ai/dsh-llm-retry', fiberPhase: 'failed' },
+  { entryId: 'include:dsh-agent', moduleName: '@deepseek-ai/dsh-agent', fiberPhase: 'active' },
+  { entryId: 'include:mcp-lsp', moduleName: '@deepseek-ai/dsh-mcp-client', fiberPhase: 'active' },
+  { entryId: 'include:mcp-secret-scan', moduleName: '@deepseek-ai/dsh-mcp-client', fiberPhase: 'active' },
+  { entryId: 'include:mcp-browser', moduleName: '@deepseek-ai/dsh-mcp-client', fiberPhase: 'active' },
+  { entryId: 'include:roycode-hooks', moduleName: 'roycode-hooks', fiberPhase: 'active' },
+  { entryId: 'include:roycode-teams', moduleName: 'roycode-teams', fiberPhase: 'active' },
+  { entryId: 'include:roycode-triggers', moduleName: 'roycode-triggers', fiberPhase: 'active' },
+  { entryId: 'include:roycode-inventory', moduleName: 'roycode-inventory', fiberPhase: 'active' },
+  { entryId: 'include:schedule', moduleName: '@deepseek-ai/dsh-schedule', fiberPhase: 'active' },
+  { entryId: 'include:dsh-llm-retry', moduleName: '@deepseek-ai/dsh-llm-retry', fiberPhase: 'failed' },
+  { entryId: 'include:dsh-compaction', moduleName: '@deepseek-ai/dsh-compaction', fiberPhase: 'active' },
 ]
 const registrations = []
 const ctx = {
@@ -79,7 +86,7 @@ check('injected exposes setRawIds', typeof injected0.setRawIds === 'function')
 const injected = reg.meta.inject()
 const filtered = await injected.list()
 const ids = filtered.map(e => e.entryId)
-check('custom list filters to 7-type set', JSON.stringify(ids) === JSON.stringify(['mcp-lsp', 'roycode-hooks', 'schedule']), ids.join(','))
+check('custom list filters to 8 (entryId keeps include: prefix)', JSON.stringify(ids) === JSON.stringify(['include:mcp-lsp', 'include:mcp-secret-scan', 'include:mcp-browser', 'include:roycode-hooks', 'include:roycode-teams', 'include:roycode-triggers', 'include:roycode-inventory', 'include:schedule']), ids.join(','))
 
 // Component 初始渲染（loading 态，stub react 不驱动异步 setState）
 const node = reg.Component({ list: injected.list })

@@ -25,10 +25,15 @@ window.__ModuleLoader__.load({
 		 * @param entries - full plugin inventory.
 		 * @returns the custom subset.
 		 */
+		/** Loader entry ids from patch inserts carry an "include:" prefix. */
+		function bareEntryId(entry) {
+			return String((entry && entry.entryId) || "").replace(/^include:/, "");
+		}
+
 		function isCustomEntry(entry) {
-			const id = String((entry && entry.entryId) || "");
+			const bare = bareEntryId(entry);
 			const mod = String((entry && entry.moduleName) || "");
-			return id === "schedule" || id.startsWith("mcp-") || id.startsWith("roycode-") || mod.includes("roycode");
+			return bare === "schedule" || bare.startsWith("mcp-") || bare.startsWith("roycode-") || mod.includes("roycode");
 		}
 
 		/** roycode-triggers host endpoint base (must match its config.port). */
@@ -81,19 +86,20 @@ window.__ModuleLoader__.load({
 				react.createElement("ul", {
 					style: { margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }
 				}, state.entries.map((entry) => {
-					const isOff = disabledSet.includes(entry.entryId);
+					const bare = bareEntryId(entry);
+					const isOff = disabledSet.includes(bare);
 					return react.createElement("li", {
 						key: entry.entryId,
 						style: { border: "1px solid var(--dsw-alias-border-l2, #ddd)", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }
 					},
 						react.createElement("div", { style: { flex: 1, minWidth: 0 } },
 							react.createElement("strong", { style: { display: "block" } }, entry.moduleName),
-							react.createElement("code", { style: { fontSize: 12, opacity: 0.7 } }, entry.entryId),
+							react.createElement("code", { style: { fontSize: 12, opacity: 0.7 } }, bare),
 							react.createElement("span", { style: { marginLeft: 8, fontSize: 12 } }, entry.fiberPhase ?? "unobserved")
 						),
 						react.createElement("button", {
 							type: "button",
-							onClick: () => toggle(entry.entryId),
+							onClick: () => toggle(bare),
 							style: { flex: "none", fontSize: 12, padding: "4px 10px", borderRadius: 6, border: "1px solid var(--dsw-alias-border-l2, #aaa)", background: isOff ? "#e5534b" : "transparent", color: isOff ? "#fff" : "inherit", cursor: "pointer" }
 						}, isOff ? "停用中·启用" : "停用")
 					);
