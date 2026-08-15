@@ -150,6 +150,11 @@ $block = @'
         host: '127.0.0.1'
         token: ''
         target: 'latest'
+
+    # -- custom plugins tab (roycode-inventory, client): Settings -> Plugins --
+    # adds a "Custom" tab listing only the roycode-dsh-pack entries
+    - id: roycode-inventory
+      name: roycode-inventory
 # roycode-dsh-pack-end
 '@
 $block = $block.Replace('@NODE@', $nodePath).Replace('@DSHHOME@', $DshHome)
@@ -205,7 +210,7 @@ if (-not $SkipVerify) {
     Write-Step 'Composing config (dsh --profile web --dump-config)...'
     $dump = & dsh --profile web --dump-config 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { Write-Warning "dump-config failed (exit $LASTEXITCODE). Check $PatchPath" }
-    foreach ($id in @('mcp-lsp', 'mcp-secret-scan', 'mcp-browser', 'roycode-hooks', 'roycode-teams', 'roycode-triggers')) {
+    foreach ($id in @('mcp-lsp', 'mcp-secret-scan', 'mcp-browser', 'roycode-hooks', 'roycode-teams', 'roycode-triggers', 'roycode-inventory')) {
       if ($dump -match [regex]::Escape($id)) { Write-Host "  [ok] $id" } else { Write-Warning "  [missing] $id in composed config" }
     }
   } else {
