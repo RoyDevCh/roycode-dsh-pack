@@ -1,9 +1,9 @@
-// roycode-hooks v2 — programmable event engine.
+// roycode-hooks v3 — programmable event engine + outbound webhooks.
 // v1: static rules from config, one-way shell side effects.
-// v2: mutable rule registry (Map<ruleId, Rule>) + one permanent
-//     session/event listener that routes against the current snapshot;
-//     4 management tools (add/confirm/remove/list); JSON persistence
-//     (active rules only); hook/invoked + hook/result session events.
+// v2: mutable rule registry + permanent listener + 4 management tools +
+//     JSON persistence + hook/invoked + hook/result session events.
+// v3: rules may also POST to a webhook URL (shell and/or webhook, both optional
+//     but at least one required); webhook payload carries the full event JSON.
 // Security: rules added at runtime start as 'pending' — the agent must
 //     obtain explicit user confirmation before hooks_rule_confirm arms
 //     them. Config seeds are user-written and always active.
@@ -30,21 +30,22 @@ function loadRules(config) {
   try {
     const persisted = JSON.parse(readFileSync(storagePath, 'utf8'))
     for (const r of persisted.rules ?? []) {
-      if (r && r.id && r.command && Array.isArray(r.events) && r.events.length && r.status === 'active') {
+      if (r && r.id && (r.command || r.webhook?.url) && Array.isArray(r.events) && r.events.length && r.status === 'active') {
         rules.set(r.id, { ...r, status: 'active' })
       }
     }
   } catch {}
   // 2. config seeds (user-trusted, always active); runtime rules win on id clash
   for (const seed of config.rules ?? []) {
-    if (!seed || !seed.id || !seed.command || !Array.isArray(seed.events) || !seed.events.length) continue
+    if (!seed || !seed.id || (!seed.command && !seed.webhook?.url) || !Array.isArray(seed.events) || !seed.events.length) continue
     if (rules.has(seed.id)) continue
     rules.set(seed.id, {
       id: seed.id,
       events: seed.events,
       match: seed.match ?? undefined,
-      command: seed.command,
+      command: seed.command ?? undefined,
       cwd: seed.cwd ?? undefined,
+      webhook: seed.webhook ?? undefined,
       timeoutMs: seed.timeoutMs ?? 30000,
       origin: 'config',
       status: 'active',
@@ -84,7 +85,7 @@ function persist() {
   }
 }
 
-function fire(rule, event) {
+function runShell(rule, event) {
   return new Promise((resolve) => {
     let child
     try {
@@ -114,6 +115,37 @@ function fire(rule, event) {
   })
 }
 
+function fireWebhook(rule, event) {
+  const url = rule.webhook?.url
+  if (!url) return Promise.resolve(null)
+  const method = (rule.webhook?.method ?? 'POST').toUpperCase()
+  const headers = { 'content-type': 'application/json' }
+  if (rule.webhook?.headers && typeof rule.webhook.headers === 'object') {
+    for (const [k, v] of Object.entries(rule.webhook.headers)) headers[k] = String(v)
+  }
+  const body = JSON.stringify({ ruleId: rule.id, eventType: event?.type ?? null, ts: new Date().toISOString(), event })
+  return fetch(url, { method, headers, body, signal: AbortSignal.timeout(rule.timeoutMs ?? 30000) })
+    .then(res => ({ ok: res.ok, status: res.status }))
+    .catch(err => ({ ok: false, error: String(err?.message ?? err) }))
+}
+
+function fire(rule, event) {
+  const tasks = []
+  if (rule.command) tasks.push(runShell(rule, event).then(res => ({ ...res, kind: 'shell' })))
+  if (rule.webhook?.url) tasks.push(fireWebhook(rule, event).then(res => ({ ...res, kind: 'webhook' })))
+  if (!tasks.length) return Promise.resolve({ ok: false, error: 'rule has neither command nor webhook' })
+  return Promise.all(tasks).then(results => ({
+    ok: results.every(res => res.ok),
+    actions: results.map(res => ({
+      kind: res.kind,
+      ok: res.ok,
+      code: res.code ?? null,
+      status: res.status ?? null,
+      error: res.error ?? null,
+    })),
+  }))
+}
+
 function publicRule(rule) {
   // lossless-JSON only: undefined properties are dropped by stringify and
   // fail the harness tool-output validation, so add fields conditionally.
@@ -127,6 +159,7 @@ function publicRule(rule) {
   }
   if (rule.match) out.match = rule.match
   if (rule.cwd) out.cwd = rule.cwd
+  if (rule.webhook?.url) out.webhook = rule.webhook
   if (rule.addedAt) out.addedAt = rule.addedAt
   if (rule.lastFiredAt) out.lastFiredAt = rule.lastFiredAt
   return out
@@ -155,7 +188,7 @@ function apply(ctx, config) {
         rule.lastFiredAt = Date.now()
         try { session?.append?.('hook/invoked', { ruleId: rule.id, eventType: type, ts: new Date().toISOString() }) } catch {}
         fire(rule, event).then((result) => {
-          try { session?.append?.('hook/result', { ruleId: rule.id, eventType: type, ok: result.ok, code: result.code ?? null, error: result.error ?? null, ts: new Date().toISOString() }) } catch {}
+          try { session?.append?.('hook/result', { ruleId: rule.id, eventType: type, ok: result.ok, code: result.code ?? null, error: result.error ?? null, actions: result.actions ?? null, ts: new Date().toISOString() }) } catch {}
         }).catch(() => {})
       } catch (err) {
         console.error('[roycode-hooks] listener error:', err)
@@ -166,14 +199,15 @@ function apply(ctx, config) {
   const tools = [
     {
       name: 'hooks_rule_add',
-      description: 'Add a new hook rule at runtime. The rule starts as "pending" and does NOT fire until the user explicitly confirms it: after calling this tool you MUST ask the user for confirmation (use ask_user_question) and only then call hooks_rule_confirm. A rule fires a shell command with a JSON payload on stdin when a session event of one of `events` occurs.',
+      description: 'Add a new hook rule at runtime. The rule starts as "pending" and does NOT fire until the user explicitly confirms it: after calling this tool you MUST ask the user for confirmation (use ask_user_question) and only then call hooks_rule_confirm. When a session event of one of `events` occurs the rule fires actions: a shell command (JSON payload on stdin) and/or an outbound webhook POST (full event JSON body). At least one of command or webhook.url is required.',
       parameters: {
         id: { type: 'string', description: 'Optional stable rule id (kebab-case). Generated when omitted.' },
         events: { type: 'array', required: true, description: 'Session event types to trigger on, e.g. ["turn/end","tool/result","user/message"].' },
         match: { type: 'string', description: 'Optional regex tested against the JSON-serialized event.' },
-        command: { type: 'string', required: true, description: 'Shell command to run (spawned via cmd on Windows). Receives the event JSON on stdin.' },
+        command: { type: 'string', description: 'Shell command to run (spawned via cmd on Windows). Receives the event JSON on stdin.' },
+        webhook: { type: 'object', additionalProperties: false, description: 'Outbound webhook action (optional; at least one of command/webhook.url required).', properties: { url: { type: 'string', description: 'Target URL; receives POST with {ruleId,eventType,ts,event}.' }, method: { type: 'string', description: 'HTTP method, default POST.' }, headers: { type: 'object', additionalProperties: true, description: 'Extra headers.' } } },
         cwd: { type: 'string', description: 'Working directory for the command.' },
-        timeoutMs: { type: 'integer', description: 'Kill the command after this many ms (default 30000).' },
+        timeoutMs: { type: 'integer', description: 'Timeout for command/webhook in ms (default 30000).' },
       },
       execute: async (args) => {
         const id = String(args.id ?? '').trim() || ('rule-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7))
@@ -181,12 +215,24 @@ function apply(ctx, config) {
         const events = Array.isArray(args.events) ? args.events.map(String).filter(Boolean) : []
         if (!events.length) throw new Error('events must be a non-empty array of event type strings')
         const command = String(args.command ?? '').trim()
-        if (!command) throw new Error('command is required')
+        const webhookUrl = String(args.webhook?.url ?? '').trim()
+        if (!command && !webhookUrl) throw new Error('either command or webhook.url is required')
+        let webhook
+        if (webhookUrl) {
+          webhook = { url: webhookUrl }
+          if (args.webhook?.method) webhook.method = String(args.webhook.method).toUpperCase()
+          if (args.webhook?.headers && typeof args.webhook.headers === 'object') {
+            const headers = {}
+            for (const [k, v] of Object.entries(args.webhook.headers)) headers[k] = String(v)
+            webhook.headers = headers
+          }
+        }
         const rule = {
           id,
           events,
           match: args.match ? String(args.match) : undefined,
-          command,
+          command: command || undefined,
+          webhook,
           cwd: args.cwd ? String(args.cwd) : undefined,
           timeoutMs: args.timeoutMs > 0 ? args.timeoutMs : 30000,
           origin: 'agent',
