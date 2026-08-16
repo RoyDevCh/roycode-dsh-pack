@@ -84,6 +84,61 @@ function togglePlugin(patchPath, id) {
   return { id: cleanId, disabled: !nowDisabled }
 }
 
+
+// ── streaming ASR (resident vosk worker, strict request/reply pairing) ───────
+// Protocol: one stdin line in -> one stdout line out. The browser sends raw
+// PCM chunks (16k mono s16le) to /voice/stream/audio; the host forwards them
+// to the vosk worker and returns the partial hypothesis. A single round trip
+// carries one audio chunk plus live text (low latency, no polling).
+let voskWorker = null
+let voskReady = null
+let voskQueue = Promise.resolve()
+
+function getVosk() {
+  if (voskWorker !== null && voskWorker.exitCode === null && voskReady !== null) return voskReady
+  if (voskWorker !== null) { try { voskWorker.kill() } catch {} }
+  const w = spawn('python', ['-u', 'C:/Users/rjq51/.dsh/media-parse/vosk-stream.py'], { stdio: ['pipe', 'pipe', 'pipe'] })
+  voskWorker = w
+  w.stderr.on('data', () => {})
+  w.on('error', () => { voskWorker = null; voskReady = null })
+  w.on('exit', () => { voskWorker = null; voskReady = null })
+  voskReady = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('vosk startup timeout')), 30000)
+    const onData = (d) => {
+      if (d.toString('utf8').trim() === 'READY') {
+        clearTimeout(timer)
+        w.stdout.off('data', onData)
+        resolve(w)
+      }
+    }
+    w.stdout.on('data', onData)
+    w.on('error', reject)
+  })
+  return voskReady
+}
+
+function voskRoundTrip(line) {
+  const run = (async () => {
+    const w = await getVosk()
+    const response = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('vosk round-trip timeout')), 15000)
+      const onData = (d) => {
+        clearTimeout(timer)
+        w.stdout.off('data', onData)
+        const t = d.toString('utf8').trim()
+        try { resolve(JSON.parse(t)) } catch { reject(new Error('bad vosk line: ' + t.slice(0, 120))) }
+      }
+      w.stdout.on('data', onData)
+    })
+    w.stdin.write(JSON.stringify(line) + '\n')
+    return response
+  })()
+  return run
+}
+
+// streaming sessions: sid -> accumulated pcm chunks (kept for final append)
+const voskSessions = new Map()
+
 // ── voice transcription (resident faster-whisper worker) ──────────────────────
 // The python worker loads the model once and serves JSON-line requests over
 // stdin/stdout:  {"wav": path}  ->  {"ok":true,"transcript":...,"segments":[...]}
@@ -92,9 +147,10 @@ function togglePlugin(patchPath, id) {
 let worker = null
 let workerQueue = Promise.resolve()
 
-function ffmpegToWav(audioPath, wavPath) {
+function ffmpegToWav(audioPath, wavPath, inputFormat) {
   return new Promise((resolve, reject) => {
-    const child = spawn('ffmpeg', ['-y', '-i', audioPath, '-ar', '16000', '-ac', '1', wavPath], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const args = inputFormat ? ['-y', '-f', inputFormat, '-i', audioPath, '-ar', '16000', '-ac', '1', wavPath] : ['-y', '-i', audioPath, '-ar', '16000', '-ac', '1', wavPath]
+    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] })
     let err = ''
     child.stderr.on('data', (d) => { err += d })
     child.on('error', reject)
@@ -228,6 +284,92 @@ function apply(ctx, config) {
           } catch (err) {
             respond(400, { ok: false, error: String(err?.message ?? err) })
           }
+        })
+        return
+      }
+      // ── streaming ASR endpoints (low-latency live voice) ──
+      if (req.method === 'POST' && req.url === '/voice/stream/open') {
+        let body = ''
+        req.on('data', (c) => { body += c; if (body.length > 4096) req.destroy() })
+        req.on('end', () => {
+          (async () => {
+            try {
+              const { sid } = JSON.parse(body || '{}')
+              if (!sid || typeof sid !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(sid)) { respond(400, { ok: false, error: 'bad sid' }); return }
+              if (voskSessions.has(sid)) { respond(200, { ok: true, sid, alreadyOpen: true }); return }
+              voskSessions.set(sid, { pcm: [] })
+              await voskRoundTrip({ type: 'open', id: sid })
+              respond(200, { ok: true, sid })
+            } catch (e) { respond(500, { ok: false, error: String((e && e.message) || e) }) }
+          })()
+        })
+        return
+      }
+      if (req.method === 'POST' && req.url === '/voice/stream/audio') {
+        const sid = (req.headers['x-stream-id'] || '').toString()
+        if (!voskSessions.has(sid)) { respond(404, { ok: false, error: 'unknown stream' }); return }
+        const chunks = []
+        let size = 0
+        req.on('data', (c) => { size += c.length; if (size > 2 * 1024 * 1024) { req.destroy(); return } chunks.push(c) })
+        req.on('end', () => {
+          (async () => {
+            try {
+              const pcm = Buffer.concat(chunks)
+              const session = voskSessions.get(sid)
+              session.pcm.push(pcm)
+              const reply = await voskRoundTrip({ type: 'audio', id: sid, base64: pcm.toString('base64') })
+              respond(200, { ok: reply.type === 'partial', partial: reply.text || '', sid })
+            } catch (e) { respond(500, { ok: false, error: String((e && e.message) || e) }) }
+          })()
+        })
+        return
+      }
+      if (req.method === 'POST' && req.url === '/voice/stream/finalize') {
+        let body = ''
+        req.on('data', (c) => { body += c; if (body.length > 4096) req.destroy() })
+        req.on('end', () => {
+          (async () => {
+            try {
+              const { sid } = JSON.parse(body || '{}')
+              const session = voskSessions.get(sid)
+              if (!session) { respond(404, { ok: false, error: 'unknown stream' }); return }
+              const reply = await voskRoundTrip({ type: 'finalize', id: sid })
+              voskSessions.delete(sid)
+              const voskText = (reply.text || '').trim()
+              let final = voskText
+              // whisper refine (better accuracy) using the accumulated pcm
+              try {
+                if (session.pcm.length) {
+                  const dir = mkdtempSync(path.join(tmpdir(), 'roycode-pcm-'))
+                  const raw = path.join(dir, 'in.pcm')
+                  const wav = path.join(dir, 'refine.wav')
+                  writeFileSync(raw, Buffer.concat(session.pcm))
+                  await ffmpegToWav(raw, wav, 's16le')
+                  const refined = await transcribeAudio(wav, transcribeScript)
+                  if (refined.transcript) final = refined.transcript
+                  rmSync(dir, { recursive: true, force: true })
+                }
+              } catch { /* keep vosk result on refine failure */ }
+              respond(200, { ok: true, final, sid })
+            } catch (e) { respond(500, { ok: false, error: String((e && e.message) || e) }) }
+          })()
+        })
+        return
+      }
+      if (req.method === 'POST' && req.url === '/voice/stream/abort') {
+        let body = ''
+        req.on('data', (c) => { body += c; if (body.length > 4096) req.destroy() })
+        req.on('end', () => {
+          (async () => {
+            try {
+              const { sid } = JSON.parse(body || '{}')
+              if (voskSessions.has(sid)) {
+                voskSessions.delete(sid)
+                await voskRoundTrip({ type: 'abort', id: sid }).catch(() => {})
+              }
+              respond(200, { ok: true })
+            } catch (e) { respond(500, { ok: false, error: String((e && e.message) || e) }) }
+          })()
         })
         return
       }
