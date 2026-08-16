@@ -25,7 +25,7 @@ const scope = {
     inject: (slot, fn) => { const entry = { slot }; registrations.push(entry); fn() },
     register: (meta, Component) => { registrations[registrations.length - 1].meta = meta; registrations[registrations.length - 1].Component = Component },
   },
-  sessions: { scope: (id) => ({ conversation: { send: (text) => { sent.push(text); return Promise.resolve() } } }) },
+  sessions: { scope: (id) => ({ get: (name) => name === 'conversation' ? { send: (text) => { sent.push(text); return Promise.resolve() } } : undefined }) },
   conversation: {},
 }
 const ctx = { effect: (fn) => { try { fn() } catch {} }, locale: scope.locale, inject: (deps, cb) => cb(scope) }

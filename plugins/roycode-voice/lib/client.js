@@ -137,8 +137,10 @@ window.__ModuleLoader__.load({
 					inject: (sessionId) => {
 						const actx = scope.sessions.scope(sessionId);
 						if (actx === undefined) throw new Error("roycode-voice: session scope missing for " + String(sessionId));
+						const conversation = actx.get("conversation");
+						if (conversation === undefined) throw new Error("roycode-voice: conversation service missing on session scope");
 						return {
-							send: (text) => actx.conversation.send(text)
+							send: (text) => conversation.send(text)
 						};
 					}
 				}, VoiceButton));
