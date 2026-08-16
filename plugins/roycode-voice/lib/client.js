@@ -19,50 +19,111 @@ window.__ModuleLoader__.load({
 		const TRIGGERS_BASE = "http://127.0.0.1:8787";
 		/** Hard cap on one recording (ms). */
 		const MAX_RECORD_MS = 30000;
+		/** Silence (ms) that ends a segment and transcribes it live. */
+		const SILENCE_MS = 800;
+		/** RMS below this counts as silence (0..1). */
+		const RMS_THRESHOLD = 0.015;
+		/** Minimum segment length before silence can cut it (avoids noise blips). */
+		const MIN_SEGMENT_MS = 500;
+		/** Level polling interval. */
+		const LEVEL_INTERVAL_MS = 100;
 
 		const zh = {
 			mic: "语音输入",
-			recording: "录音中，点按停止",
+			recording: "录音中，说话自动分段；再点停止",
 			transcribing: "转写中…",
 			error: "失败"
 		};
 		const en = {
 			mic: "Voice input",
-			recording: "Recording - tap to stop",
+			recording: "Recording - segments auto-split on silence; tap to stop",
 			transcribing: "Transcribing…",
 			error: "Failed"
 		};
 
-		/** Mic button in the composer tool row: record -> transcribe -> send. */
+		/** Mic button in the composer tool row: record -> live segment transcribe -> input draft. */
 		function VoiceButton({ setDraft, currentDraft, t }) {
 			const [phase, setPhase] = react.useState("idle");
 			const [msg, setMsg] = react.useState("");
-			const recorderRef = react.useRef(null);
+			const [live, setLive] = react.useState(0);
+			const streamRef = react.useRef(null);
+			const audioRef = react.useRef(null);
+			const analyserRef = react.useRef(null);
+			const levelTimerRef = react.useRef(null);
+			const silenceRef = react.useRef(0);
+			const segStartRef = react.useRef(0);
+			const recRef = react.useRef(null);
 			const chunksRef = react.useRef([]);
-			const timerRef = react.useRef(null);
+			const stoppingRef = react.useRef(false);
+			const queueRef = react.useRef(Promise.resolve());
 
-			const transcribe = async (blob) => {
-				setPhase("transcribing");
-				try {
-					const res = await fetch(TRIGGERS_BASE + "/voice/transcribe", {
-						method: "POST",
-						headers: { "content-type": blob.type || "audio/webm" },
-						body: blob
-					});
-					const data = await res.json();
-					if (!data.ok || !data.transcript) {
-						setPhase("error");
-						setMsg(t("error") + ": " + (data.error || "no speech detected"));
-						return;
+			// Serialize transcriptions so draft appends stay in order.
+			const enqueue = (blob) => {
+				queueRef.current = queueRef.current.then(async () => {
+					try {
+						const res = await fetch(TRIGGERS_BASE + "/voice/transcribe", {
+							method: "POST",
+							headers: { "content-type": blob.type || "audio/webm" },
+							body: blob
+						});
+						const data = await res.json();
+						if (!data.ok || !data.transcript) return;
+						const prev = currentDraft().trim();
+						const next = prev ? prev + "\n" + data.transcript : data.transcript;
+						setDraft(next);
+						setMsg("✓ " + data.transcript.slice(0, 50) + (data.transcript.length > 50 ? "…" : ""));
+					} catch (e) {
+						setMsg(t("error") + ": " + String((e && e.message) || e));
 					}
-					const prev = currentDraft().trim();
-					const next = prev ? prev + "\n" + data.transcript : data.transcript;
-					setDraft(next);
-					setPhase("idle");
-					setMsg("✓ " + data.transcript.slice(0, 60) + (data.transcript.length > 60 ? "…" : ""));
-				} catch (e) {
-					setPhase("error");
-					setMsg(t("error") + ": " + String((e && e.message) || e));
+				});
+				return queueRef.current;
+			};
+
+			const endSegment = () => {
+				if (recRef.current && recRef.current.state !== "inactive") {
+					try { recRef.current.stop() } catch {}
+				}
+			};
+
+			const beginSegment = () => {
+				chunksRef.current = [];
+				segStartRef.current = Date.now();
+				silenceRef.current = 0;
+				const rec = new MediaRecorder(streamRef.current);
+				rec.ondataavailable = (e) => { if (e.data && e.data.size) chunksRef.current.push(e.data); };
+				rec.onstop = () => {
+					const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
+					if (blob.size > 0) {
+						setLive((n) => n + 1);
+						enqueue(blob).finally(() => setLive((n) => Math.max(0, n - 1)));
+					}
+					if (!stoppingRef.current) beginSegment();
+				};
+				rec.onerror = () => { setPhase("error"); setMsg(t("error")); };
+				recRef.current = rec;
+				rec.start();
+			};
+
+			const levelLoop = () => {
+				const analyser = analyserRef.current;
+				if (!analyser) return;
+				const data = new Uint8Array(analyser.fftSize);
+				analyser.getByteTimeDomainData(data);
+				let sum = 0;
+				for (let i = 0; i < data.length; i++) {
+					const v = (data[i] - 128) / 128;
+					sum += v * v;
+				}
+				const rms = Math.sqrt(sum / data.length);
+				const now = Date.now();
+				if (rms < RMS_THRESHOLD) {
+					silenceRef.current += LEVEL_INTERVAL_MS;
+					if (silenceRef.current >= SILENCE_MS && now - segStartRef.current >= MIN_SEGMENT_MS) {
+						// Auto-split: end this segment, transcribe it, keep recording.
+						endSegment();
+					}
+				} else {
+					silenceRef.current = 0;
 				}
 			};
 
@@ -70,19 +131,18 @@ window.__ModuleLoader__.load({
 				setMsg("");
 				try {
 					const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-					const rec = new MediaRecorder(stream);
-					chunksRef.current = [];
-					rec.ondataavailable = (e) => { if (e.data && e.data.size) chunksRef.current.push(e.data); };
-					rec.onstop = () => {
-						stream.getTracks().forEach((tr) => { try { tr.stop() } catch {} });
-						const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
-						transcribe(blob);
-					};
-					rec.onerror = () => { setPhase("error"); setMsg(t("error")); };
-					recorderRef.current = rec;
-					rec.start();
+					streamRef.current = stream;
+					const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+					audioRef.current = audioCtx;
+					const source = audioCtx.createMediaStreamSource(stream);
+					const analyser = audioCtx.createAnalyser();
+					analyser.fftSize = 2048;
+					source.connect(analyser);
+					analyserRef.current = analyser;
+					stoppingRef.current = false;
+					beginSegment();
+					levelTimerRef.current = setInterval(levelLoop, LEVEL_INTERVAL_MS);
 					setPhase("recording");
-					timerRef.current = setTimeout(() => { try { rec.stop() } catch {} }, MAX_RECORD_MS);
 				} catch (e) {
 					setPhase("error");
 					setMsg(t("error") + ": " + String((e && e.message) || e));
@@ -90,18 +150,24 @@ window.__ModuleLoader__.load({
 			};
 
 			const stop = () => {
-				if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-				try { if (recorderRef.current) recorderRef.current.stop() } catch {}
+				stoppingRef.current = true;
+				if (levelTimerRef.current) { clearInterval(levelTimerRef.current); levelTimerRef.current = null; }
+				endSegment();
+				if (audioRef.current) { try { audioRef.current.close() } catch {} audioRef.current = null; }
+				if (streamRef.current) { streamRef.current.getTracks().forEach((tr) => { try { tr.stop() } catch {} }); streamRef.current = null; }
+				setPhase("idle");
 			};
 
 			const onClick = () => { if (phase === "recording") stop(); else start(); };
 			const recording = phase === "recording";
+			const busy = live > 0;
 			return react.createElement("div", { style: { display: "inline-flex", alignItems: "center", gap: 4 } },
 				react.createElement("button", {
 					type: "button",
 					title: t("mic"),
 					"aria-label": t("mic"),
 					onClick,
+					disabled: phase === "transcribing",
 					style: {
 						minWidth: 28,
 						height: 28,
@@ -114,7 +180,8 @@ window.__ModuleLoader__.load({
 						padding: "0 6px"
 					}
 				}, recording ? "●" : "🎤"),
-				msg ? react.createElement("span", { style: { fontSize: 11, opacity: 0.8, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, msg) : null
+				msg ? react.createElement("span", { style: { fontSize: 11, opacity: 0.8, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, msg) : null,
+				busy ? react.createElement("span", { style: { fontSize: 11, opacity: 0.7 } }, t("transcribing")) : null
 			);
 		}
 

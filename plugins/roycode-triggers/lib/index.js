@@ -84,30 +84,78 @@ function togglePlugin(patchPath, id) {
   return { id: cleanId, disabled: !nowDisabled }
 }
 
-// ── voice transcription ───────────────────────────────────────────────────────
-function runProcess(command, args) {
+// ── voice transcription (resident faster-whisper worker) ──────────────────────
+// The python worker loads the model once and serves JSON-line requests over
+// stdin/stdout:  {"wav": path}  ->  {"ok":true,"transcript":...,"segments":[...]}
+// A per-request process would reload the model every time (~8s); the resident
+// worker turns a 3-8s utterance into ~1.2s wall time.
+let worker = null
+let workerQueue = Promise.resolve()
+
+function ffmpegToWav(audioPath, wavPath) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
-    let out = ''
+    const child = spawn('ffmpeg', ['-y', '-i', audioPath, '-ar', '16000', '-ac', '1', wavPath], { stdio: ['ignore', 'pipe', 'pipe'] })
     let err = ''
-    child.stdout.on('data', (d) => { out += d })
     child.stderr.on('data', (d) => { err += d })
     child.on('error', reject)
-    child.on('close', (code) => (code === 0 ? resolve(out) : reject(new Error(command + ' exit ' + code + ': ' + err.slice(0, 300)))))
+    child.on('close', (code) => (code === 0 ? resolve() : reject(new Error('ffmpeg exit ' + code + ': ' + err.slice(0, 300)))))
   })
+}
+
+function getWorker(scriptPath) {
+  if (worker !== null && worker.exitCode === null) return Promise.resolve(worker)
+  if (worker !== null) { try { worker.kill() } catch {} }
+  const w = spawn('python', ['-u', scriptPath, '--serve'], { stdio: ['pipe', 'pipe', 'pipe'] })
+  worker = w
+  w.stderr.on('data', () => {})
+  w.on('error', () => { worker = null })
+  w.on('exit', () => { worker = null })
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('transcribe worker startup timeout')), 30000)
+    const onData = (d) => {
+      if (d.toString('utf8').trim() === 'READY') {
+        clearTimeout(timer)
+        w.stdout.off('data', onData)
+        resolve(w)
+      }
+    }
+    w.stdout.on('data', onData)
+    w.on('error', reject)
+  })
+}
+
+function transcribeRequest(scriptPath, wavPath) {
+  const request = (async () => {
+    const w = await getWorker(scriptPath)
+    if (w === null) throw new Error('transcribe worker failed to start')
+    const response = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('transcribe worker timeout')), 60000)
+      const onData = (d) => {
+        const line = d.toString('utf8').trim()
+        if (!line) return
+        clearTimeout(timer)
+        w.stdout.off('data', onData)
+        try { resolve(JSON.parse(line)) } catch { reject(new Error('bad worker line: ' + line.slice(0, 120))) }
+      }
+      w.stdout.on('data', onData)
+    })
+    w.stdin.write(JSON.stringify({ wav: wavPath }) + '\n')
+    return response
+  })()
+  return request
 }
 
 async function transcribeAudio(audioPath, scriptPath) {
   const dir = mkdtempSync(path.join(tmpdir(), 'roycode-voice-'))
   const wav = path.join(dir, 'decoded.wav')
   try {
-    await runProcess('ffmpeg', ['-y', '-i', audioPath, '-ar', '16000', '-ac', '1', wav])
-    const out = await runProcess('python', [scriptPath, wav])
-    const segments = []
-    const re = /^\[(\d+:\d+) -> (\d+:\d+)\] (.*)$/mg
-    let m
-    while ((m = re.exec(out)) !== null) segments.push({ start: m[1], end: m[2], text: m[3] })
-    return { transcript: segments.map((s) => s.text).join(' ').trim(), segments }
+    await ffmpegToWav(audioPath, wav)
+    // serialize requests through the single worker (one at a time)
+    const run = workerQueue.then(() => transcribeRequest(scriptPath, wav))
+    workerQueue = run.catch(() => {})
+    const data = await run
+    if (data.ok !== true) throw new Error(data.error || 'transcribe failed')
+    return { transcript: data.transcript, segments: data.segments }
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -116,6 +164,8 @@ async function transcribeAudio(audioPath, scriptPath) {
 
 function apply(ctx, config) {
   const transcribeScript = config.transcribeScript ?? DEFAULT_TRANSCRIBE_SCRIPT
+  // prewarm the resident worker so the first mic tap is already fast
+  getWorker(transcribeScript).catch(() => {})
   const port = config.port
   const host = config.host
   const token = config.token ?? ''
