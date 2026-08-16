@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
 		};
 
 		/** Mic button in the composer tool row: record -> transcribe -> send. */
-		function VoiceButton({ send, t }) {
+		function VoiceButton({ setDraft, currentDraft, t }) {
 			const [phase, setPhase] = react.useState("idle");
 			const [msg, setMsg] = react.useState("");
 			const recorderRef = react.useRef(null);
@@ -55,7 +55,9 @@ window.__ModuleLoader__.load({
 						setMsg(t("error") + ": " + (data.error || "no speech detected"));
 						return;
 					}
-					await send(data.transcript);
+					const prev = currentDraft().trim();
+					const next = prev ? prev + "\n" + data.transcript : data.transcript;
+					setDraft(next);
 					setPhase("idle");
 					setMsg("✓ " + data.transcript.slice(0, 60) + (data.transcript.length > 60 ? "…" : ""));
 				} catch (e) {
@@ -139,8 +141,10 @@ window.__ModuleLoader__.load({
 						if (actx === undefined) throw new Error("roycode-voice: session scope missing for " + String(sessionId));
 						const conversation = actx.get("conversation");
 						if (conversation === undefined) throw new Error("roycode-voice: conversation service missing on session scope");
+						const input = conversation.input.for(actx);
 						return {
-							send: (text) => conversation.send(text)
+							setDraft: (text) => input.actions.setDraft(text),
+							currentDraft: () => input.snapshot?.draft ?? ""
 						};
 					}
 				}, VoiceButton));

@@ -18,6 +18,7 @@ await import('file:///' + CLIENT.replace(/\\/g, '/') + '?v=' + Date.now())
 check('voice client loaded', loaded !== null && typeof loaded.apply === 'function')
 
 const sent = []
+const drafts = []
 const registrations = []
 const scope = {
   locale: { bind: (ns) => (key) => ns + ':' + key },
@@ -25,7 +26,15 @@ const scope = {
     inject: (slot, fn) => { const entry = { slot }; registrations.push(entry); fn() },
     register: (meta, Component) => { registrations[registrations.length - 1].meta = meta; registrations[registrations.length - 1].Component = Component },
   },
-  sessions: { scope: (id) => ({ get: (name) => name === 'conversation' ? { send: (text) => { sent.push(text); return Promise.resolve() } } : undefined }) },
+  sessions: { scope: (id) => ({ get: (name) => name === 'conversation' ? {
+    send: (text) => { sent.push(text); return Promise.resolve() },
+    input: {
+      for: (actx) => ({
+        actions: { setDraft: (text) => { drafts.push(text) } },
+        get snapshot() { return { draft: drafts.length ? drafts[drafts.length - 1] : '' } },
+      }),
+    },
+  } : undefined }) },
   conversation: {},
 }
 const ctx = { effect: (fn) => { try { fn() } catch {} }, locale: scope.locale, inject: (deps, cb) => cb(scope) }
@@ -34,9 +43,11 @@ check('registered into conversation.input.right', registrations.length === 1 && 
 const reg = registrations[0]
 check('block id roycode-voice', reg.meta.id === 'roycode-voice')
 const injected = reg.meta.inject('session-1')
-await injected.send('你好，这是语音转写')
-check('conversation.send wired to session scope', sent.length === 1 && sent[0] === '你好，这是语音转写')
-const node = reg.Component({ send: injected.send, t: (k) => k })
+const injected2 = reg.meta.inject('session-1')
+injected2.setDraft('你好，这是语音转写')
+check('setDraft fills input draft (not direct send)', drafts.length === 1 && drafts[0] === '你好，这是语音转写' && sent.length === 0)
+check('currentDraft reads back', injected2.currentDraft() === '你好，这是语音转写')
+const node = reg.Component({ setDraft: injected2.setDraft, currentDraft: injected2.currentDraft, t: (k) => k })
 check('button renders', node?.type === 'div' && node?.children?.[0]?.props?.['aria-label'] === 'mic')
 
 // ── 2. 宿主 /voice/transcribe 端点（独立端口 8790）──
