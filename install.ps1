@@ -175,6 +175,11 @@ $block = @'
         command: '@NODE@'
         args: ['@DSHHOME@\mcp-servers\voice\server.mjs']
         toolCallTimeoutMs: 180000
+
+    # -- voice button in the composer (roycode-voice, client) --
+    # mic button next to send: record -> POST /voice/transcribe -> send as user message
+    - id: roycode-voice
+      name: roycode-voice
 # roycode-dsh-pack-end
 '@
 $block = $block.Replace('@NODE@', $nodePath).Replace('@DSHHOME@', $DshHome)
@@ -230,7 +235,7 @@ if (-not $SkipVerify) {
     Write-Step 'Composing config (dsh --profile web --dump-config)...'
     $dump = & dsh --profile web --dump-config 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { Write-Warning "dump-config failed (exit $LASTEXITCODE). Check $PatchPath" }
-    foreach ($id in @('mcp-lsp', 'mcp-secret-scan', 'mcp-browser', 'roycode-hooks', 'roycode-teams', 'roycode-triggers', 'roycode-inventory', 'mcp-notebooks', 'mcp-voice')) {
+    foreach ($id in @('mcp-lsp', 'mcp-secret-scan', 'mcp-browser', 'roycode-hooks', 'roycode-teams', 'roycode-triggers', 'roycode-inventory', 'mcp-notebooks', 'mcp-voice', 'roycode-voice')) {
       if ($dump -match [regex]::Escape($id)) { Write-Host "  [ok] $id" } else { Write-Warning "  [missing] $id in composed config" }
     }
   } else {

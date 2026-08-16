@@ -1,15 +1,15 @@
-// roycode-triggers v0.2 — inbound HTTP webhooks + plugin toggle endpoints.
-// POST /trigger {message, session?} -> agent.followup(createUserMessage(...))
-// wakes the target agent's driver; the message becomes a normal later turn.
-// GET  /health                  -> { ok, service, agents }
-// GET  /plugins/disabled        -> { ok, disabled: [entryId] }
-// POST /plugins/toggle {id}     -> flips the disables section of cordis.patch.yml
-//                                  (same format manage.ps1 uses); needs a restart.
-// CORS-enabled so the Settings UI (roycode-inventory) can call it.
-// Auth: when config.token is set, require "Authorization: Bearer <token>".
+// roycode-triggers v0.3 — inbound webhooks + plugin toggles + voice transcription.
+// POST /trigger {message, session?}       -> agent.followup (wakes a later turn)
+// GET  /health                            -> liveness
+// GET  /plugins/disabled                  -> disables set
+// POST /plugins/toggle {id}               -> flip disables section (restart applies)
+// POST /voice/transcribe (raw audio blob) -> ffmpeg decode -> faster-whisper -> {transcript}
+// CORS-enabled for the Settings UI and the composer voice button.
 import { createServer } from 'node:http'
-import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync } from 'node:fs'
 import path from 'node:path'
+import { tmpdir } from 'node:os'
 import z from '@deepseek-ai/schemastery'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
@@ -25,8 +25,10 @@ const Config = z.object({
 
 const MAX_MESSAGE_CHARS = 4000
 const MAX_BODY_BYTES = 65536
+const MAX_AUDIO_BYTES = 30 * 1024 * 1024
 const BEGIN_MARKER = '# roycode-dsh-pack-disables-begin'
 const END_MARKER = '# roycode-dsh-pack-disables-end'
+const DEFAULT_TRANSCRIBE_SCRIPT = (process.env.DSH_HOME ? path.join(process.env.DSH_HOME, 'media-parse/fw-transcribe.py') : null) || 'C:/Users/rjq51/.dsh/media-parse/fw-transcribe.py'
 
 // ── disables section helpers (same contract as manage.ps1) ───────────────────
 function readDisablesSet(patchPath) {
@@ -82,8 +84,38 @@ function togglePlugin(patchPath, id) {
   return { id: cleanId, disabled: !nowDisabled }
 }
 
+// ── voice transcription ───────────────────────────────────────────────────────
+function runProcess(command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let out = ''
+    let err = ''
+    child.stdout.on('data', (d) => { out += d })
+    child.stderr.on('data', (d) => { err += d })
+    child.on('error', reject)
+    child.on('close', (code) => (code === 0 ? resolve(out) : reject(new Error(command + ' exit ' + code + ': ' + err.slice(0, 300)))))
+  })
+}
+
+async function transcribeAudio(audioPath, scriptPath) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'roycode-voice-'))
+  const wav = path.join(dir, 'decoded.wav')
+  try {
+    await runProcess('ffmpeg', ['-y', '-i', audioPath, '-ar', '16000', '-ac', '1', wav])
+    const out = await runProcess('python', [scriptPath, wav])
+    const segments = []
+    const re = /^\[(\d+:\d+) -> (\d+:\d+)\] (.*)$/mg
+    let m
+    while ((m = re.exec(out)) !== null) segments.push({ start: m[1], end: m[2], text: m[3] })
+    return { transcript: segments.map((s) => s.text).join(' ').trim(), segments }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 
 function apply(ctx, config) {
+  const transcribeScript = config.transcribeScript ?? DEFAULT_TRANSCRIBE_SCRIPT
   const port = config.port
   const host = config.host
   const token = config.token ?? ''
@@ -134,10 +166,7 @@ function apply(ctx, config) {
       if (req.method === 'POST' && req.url === '/plugins/toggle') {
         if (token) {
           const auth = req.headers.authorization ?? ''
-          if (auth !== 'Bearer ' + token) {
-            respond(401, { ok: false, error: 'unauthorized' })
-            return
-          }
+          if (auth !== 'Bearer ' + token) { respond(401, { ok: false, error: 'unauthorized' }); return }
         }
         let body = ''
         req.on('data', (chunk) => { body += chunk; if (body.length > MAX_BODY_BYTES) req.destroy() })
@@ -152,16 +181,42 @@ function apply(ctx, config) {
         })
         return
       }
+      if (req.method === 'POST' && req.url === '/voice/transcribe') {
+        if (token) {
+          const auth = req.headers.authorization ?? ''
+          if (auth !== 'Bearer ' + token) { respond(401, { ok: false, error: 'unauthorized' }); return }
+        }
+        const chunks = []
+        let size = 0
+        req.on('data', (chunk) => {
+          size += chunk.length
+          if (size > MAX_AUDIO_BYTES) { req.destroy(); return }
+          chunks.push(chunk)
+        })
+        req.on('end', () => {
+          (async () => {
+            const dir = mkdtempSync(path.join(tmpdir(), 'roycode-audio-'))
+            const audio = path.join(dir, 'input.webm')
+            try {
+              writeFileSync(audio, Buffer.concat(chunks))
+              const result = await transcribeAudio(audio, transcribeScript)
+              respond(200, { ok: true, transcript: result.transcript, segments: result.segments })
+            } catch (err) {
+              respond(500, { ok: false, error: String(err?.message ?? err) })
+            } finally {
+              rmSync(dir, { recursive: true, force: true })
+            }
+          })()
+        })
+        return
+      }
       if (req.method !== 'POST' || req.url !== '/trigger') {
-        respond(404, { ok: false, error: 'not found; POST /trigger, POST /plugins/toggle, GET /plugins/disabled' })
+        respond(404, { ok: false, error: 'not found; POST /trigger, POST /plugins/toggle, POST /voice/transcribe, GET /plugins/disabled' })
         return
       }
       if (token) {
         const auth = req.headers.authorization ?? ''
-        if (auth !== 'Bearer ' + token) {
-          respond(401, { ok: false, error: 'unauthorized' })
-          return
-        }
+        if (auth !== 'Bearer ' + token) { respond(401, { ok: false, error: 'unauthorized' }); return }
       }
       let body = ''
       req.on('data', (chunk) => {
@@ -172,19 +227,10 @@ function apply(ctx, config) {
         try {
           const payload = JSON.parse(body || '{}')
           const text = String(payload?.message ?? '').trim()
-          if (!text) {
-            respond(400, { ok: false, error: 'message is required' })
-            return
-          }
-          if (text.length > MAX_MESSAGE_CHARS) {
-            respond(413, { ok: false, error: 'message too long' })
-            return
-          }
+          if (!text) { respond(400, { ok: false, error: 'message is required' }); return }
+          if (text.length > MAX_MESSAGE_CHARS) { respond(413, { ok: false, error: 'message too long' }); return }
           const agents = pickAgents(payload?.session)
-          if (!agents.length) {
-            respond(404, { ok: false, error: 'no live target agent' })
-            return
-          }
+          if (!agents.length) { respond(404, { ok: false, error: 'no live target agent' }); return }
           const delivered = []
           for (const agent of agents) {
             try {
@@ -209,7 +255,7 @@ function apply(ctx, config) {
       console.error('[roycode-triggers] http server error:', err?.message ?? err)
     })
     server.listen(port, host, () => {
-      console.log('[roycode-triggers] listening on http://' + host + ':' + port + '/trigger')
+      console.log('[roycode-triggers] listening on http://' + host + ':' + port)
     })
     return () => {
       try { server.close() } catch {}

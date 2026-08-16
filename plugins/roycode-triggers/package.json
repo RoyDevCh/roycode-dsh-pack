@@ -1,7 +1,7 @@
 {
   "name": "roycode-triggers",
-  "version": "0.2.0",
-  "description": "Inbound webhooks + plugin toggle endpoints (v0.2)",
+  "version": "0.3.0",
+  "description": "Inbound webhooks + plugin toggles + voice transcription (v0.3)",
   "type": "module",
   "main": "lib/index.js",
   "private": true
