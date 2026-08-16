@@ -156,6 +156,25 @@ $block = @'
     # adds a "Custom" tab listing only the roycode-dsh-pack entries
     - id: roycode-inventory
       name: roycode-inventory
+
+    # -- notebook cell editing (.ipynb) --
+    - id: mcp-notebooks
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: notebooks
+        transport: stdio
+        command: '@NODE@'
+        args: ['@DSHHOME@\mcp-servers\notebooks\server.mjs']
+
+    # -- voice input/output (mic -> faster-whisper, SAPI TTS) --
+    - id: mcp-voice
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: voice
+        transport: stdio
+        command: '@NODE@'
+        args: ['@DSHHOME@\mcp-servers\voice\server.mjs']
+        toolCallTimeoutMs: 180000
 # roycode-dsh-pack-end
 '@
 $block = $block.Replace('@NODE@', $nodePath).Replace('@DSHHOME@', $DshHome)
@@ -211,7 +230,7 @@ if (-not $SkipVerify) {
     Write-Step 'Composing config (dsh --profile web --dump-config)...'
     $dump = & dsh --profile web --dump-config 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { Write-Warning "dump-config failed (exit $LASTEXITCODE). Check $PatchPath" }
-    foreach ($id in @('mcp-lsp', 'mcp-secret-scan', 'mcp-browser', 'roycode-hooks', 'roycode-teams', 'roycode-triggers', 'roycode-inventory')) {
+    foreach ($id in @('mcp-lsp', 'mcp-secret-scan', 'mcp-browser', 'roycode-hooks', 'roycode-teams', 'roycode-triggers', 'roycode-inventory', 'mcp-notebooks', 'mcp-voice')) {
       if ($dump -match [regex]::Escape($id)) { Write-Host "  [ok] $id" } else { Write-Warning "  [missing] $id in composed config" }
     }
   } else {

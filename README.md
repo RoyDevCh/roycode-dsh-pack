@@ -7,8 +7,8 @@
 
 | 类别 | 名称 | 说明 |
 |---|---|---|
-| Skill ×4 | github-workflow / magic-docs / output-styles / scheduled-prompts | 热加载，无需重启 |
-| MCP ×3 | lsp（9 个工具：诊断/定义/引用/实现/hover/符号/重命名）、secret-scan（2）、browser（2） | 需重启 dsh web |
+| Skill ×5 | github-workflow / magic-docs / output-styles / scheduled-prompts / **team-workflow**（teams 标准协作模式） | 热加载，无需重启 |
+| MCP ×5 | lsp（9 工具）、secret-scan（2）、browser（2）、**notebooks（5：.ipynb 单元格增删改查）**、**voice（3：麦克风录音→faster-whisper 转写、SAPI TTS、设备列表）** | 需重启 dsh web |
 | Cordis 插件 ×5 | roycode-hooks v3（**可编程事件引擎 + 出站 Webhook**：session 事件→shell 命令和/或 webhook POST（完整事件 JSON，可带自定义 method/headers），4 个运行时管理工具 hooks_rule_add/confirm/remove/list + JSON 持久化 + 会话事件审计）、roycode-teams v0.4（**12 个工具**：成员读游标 + unread + limit + since 覆盖、team_archive 幂等归档（默认保留 200 条）、**team_history 归档回读（since/limit 分页，审计闭环）**、内存上限 50 + memoryHistory、team_memory_clear）、dsh-schedule（原生定时提醒：schedule_create/list/delete，scheduled-prompts 技能的引擎）、**roycode-triggers v0.2**（入站 Webhook：POST /trigger 注入后续回合，Bearer token / latest/all / session 定向；**v0.2 新增 GUI 启停端点**：GET /plugins/disabled + POST /plugins/toggle，直接改 cordis.patch.yml 的 disables 区，与 manage.ps1 同格式互通；默认 127.0.0.1:8787）、**roycode-inventory v0.2**（客户端插件：Settings → Plugins 增加 Custom 分类 tab + **每行启停开关**（调用 triggers 的 /plugins/toggle）+ 诊断行） | 需重启 dsh web |
 
 ## 安装

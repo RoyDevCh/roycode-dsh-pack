@@ -18,7 +18,7 @@ $PluginRoot = Join-Path $DshHome 'profiles\web\node_modules'
 $SkillsRoot = Join-Path $DshHome 'skills'
 $McpRoot = Join-Path $DshHome 'mcp-servers'
 
-$PACK_IDS = @('mcp-lsp', 'mcp-secret-scan', 'mcp-browser', 'roycode-hooks', 'roycode-teams', 'schedule', 'roycode-triggers', 'roycode-inventory')
+$PACK_IDS = @('mcp-lsp', 'mcp-secret-scan', 'mcp-browser', 'mcp-notebooks', 'mcp-voice', 'roycode-hooks', 'roycode-teams', 'schedule', 'roycode-triggers', 'roycode-inventory')
 $BEGIN_MARKER = '# roycode-dsh-pack-disables-begin'
 $END_MARKER = '# roycode-dsh-pack-disables-end'
 
@@ -76,11 +76,11 @@ function Show-Status {
   }
   $skillNames = @('github-workflow','magic-docs','output-styles','scheduled-prompts')
   $skills = @(Get-ChildItem $SkillsRoot -Directory -ErrorAction SilentlyContinue | Where-Object { $skillNames -contains $_.Name })
-  $mcpDirs = @('lsp-server','secret-scan','browser' | Where-Object { Test-Path (Join-Path $McpRoot $_) })
+  $mcpDirs = @('lsp-server','secret-scan','browser','notebooks','voice' | Where-Object { Test-Path (Join-Path $McpRoot $_) })
   $pluginDirs = @('roycode-hooks','roycode-teams','roycode-triggers','roycode-inventory' | Where-Object { Test-Path (Join-Path $PluginRoot $_) })
   Write-Host ''
   Write-Host ('skills installed:    {0}/4' -f $skills.Count) -ForegroundColor Cyan
-  Write-Host ('mcp servers dirs:   {0}/3' -f $mcpDirs.Count) -ForegroundColor Cyan
+  Write-Host ('mcp servers dirs:   {0}/5' -f $mcpDirs.Count) -ForegroundColor Cyan
   Write-Host ('cordis plugin dirs: {0}/4' -f $pluginDirs.Count) -ForegroundColor Cyan
   Write-Host ''
   Write-Host 'Note: disabled entries take effect after a dsh web restart.' -ForegroundColor DarkGray
